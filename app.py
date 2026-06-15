@@ -106,51 +106,61 @@ def fetch_daily_data(date_str):
 # 網頁 UI 與主程式
 # ==========================================
 
-st.title("🚀 台股籌碼雙買與爆量掃描器")
-st.markdown("自動抓取近 7 個交易日資料，找出外資、投信買超與爆量訊號。")
+# ==========================================
+# 網頁 UI 與主程式
+# ==========================================
 
-if st.button("開始掃描 (抓取最新 7 日資料)", type="primary"):
+st.title("🚀 台股籌碼雙買與爆量掃描器")
+st.markdown("自動抓取近期交易日資料，找出外資、投信買超與爆量訊號。")
+
+# 🌟 新增功能：讓使用者滑動選擇要抓取的天數 (1 到 30 天，預設為 7 天)
+target_days = st.slider("📅 選擇要分析的交易日天數", min_value=1, max_value=30, value=7, step=1)
+
+# 按鈕文字也會跟著使用者的選擇動態改變
+if st.button(f"開始掃描 (抓取最新 {target_days} 日資料)", type="primary"):
     
     all_data = []
     days_collected = 0
     current_date = datetime.now()
     
-    # 安全煞車機制：避免因被鎖 IP 或連假太長導致無限迴圈
-    max_attempts = 30  
+    # 🌟 動態煞車機制：給予使用者選擇天數 + 20 天的尋找緩衝期 (為了跨越週末與連假)
+    max_attempts = target_days + 20  
     attempts = 0       
     
     progress_bar = st.progress(0)
     status_text = st.empty()
 
-    while days_collected < 7 and attempts < max_attempts:
+    # 🌟 把原本寫死的 7 換成 target_days
+    while days_collected < target_days and attempts < max_attempts:
         date_str = current_date.strftime("%Y%m%d")
         
         # 只抓平日 (0=週一 ~ 4=週五)
         if current_date.weekday() < 5: 
-            status_text.text(f"👉 正在獲取 {date_str} 的資料... (已收集 {days_collected}/7 天)")
+            status_text.text(f"👉 正在獲取 {date_str} 的資料... (已收集 {days_collected}/{target_days} 天)")
             daily_df = fetch_daily_data(date_str)
             
             if daily_df is not None:
                 all_data.append(daily_df)
                 days_collected += 1
-                progress_bar.progress(days_collected / 7)
-                time.sleep(5)  # 成功抓到，休息 5 秒保護連線
+                # 🌟 進度條根據選擇天數動態計算比例
+                progress_bar.progress(days_collected / target_days)
+                time.sleep(5)  
             else:
                 status_text.warning(f"⚠️ {date_str} 無法取得資料，繼續嘗試前一天...")
-                time.sleep(3)  # 失敗也休息 3 秒，避免被鎖 IP
+                time.sleep(3)  
                 
         current_date -= timedelta(days=1)
         attempts += 1
         
-    if days_collected < 7:
-        st.error("❌ 抓取失敗：超過最大嘗試次數！可能是證交所尚未公布資料，或者您的網路 IP 暫時被證交所阻擋，請稍後再試。")
+    if days_collected < target_days:
+        st.error(f"❌ 抓取失敗：超過最大嘗試次數！只成功抓到了 {days_collected} 天。請稍後再試。")
     else:
-        status_text.success("✅ 資料收集完畢，開始進行運算！")
+        status_text.success(f"✅ {target_days} 日資料收集完畢，開始進行運算！")
 
     # ==========================================
     # 數據運算與排版顯示
     # ==========================================
-    if all_data and days_collected == 7:
+    if all_data and days_collected == target_days:
         try:
             combined_df = pd.concat(all_data)
             
@@ -172,32 +182,30 @@ if st.button("開始掃描 (抓取最新 7 日資料)", type="primary"):
             latest_vol = combined_df[combined_df['日期'] == latest_date].groupby('代號')['成交量'].sum()
             prev_vol_avg = combined_df[combined_df['日期'] != latest_date].groupby('代號')['成交量'].mean()
             
-            # 對齊資料並補 0
             latest_vol, prev_vol_avg = latest_vol.align(prev_vol_avg, fill_value=0)
             
-            # 爆量條件：今日大於前幾日平均的 1.5 倍，且今日大於 0
             vol_surge_series = (latest_vol > (prev_vol_avg * 1.5)) & (latest_vol > 0)
             surge_codes = vol_surge_series[vol_surge_series].index.tolist()
             
             top20_dual['爆量訊號'] = top20_dual['代號'].apply(lambda x: '🔥 是' if x in surge_codes else '否')
 
-            # 4. 在網頁上顯示精美的表格分頁
+            # 4. 顯示結果 (標題也加上動態天數)
             st.divider()
             tab1, tab2, tab3 = st.tabs(["🔥 同步買超 & 爆量", "🟢 外資買超 Top 20", "🔴 投信買超 Top 20"])
             
             with tab1:
-                st.subheader("🏆 【外資與投信 同步買超】近 7 個交易日")
+                st.subheader(f"🏆 【外資與投信 同步買超】近 {target_days} 個交易日")
                 if not top20_dual.empty:
                     st.dataframe(top20_dual[['代號', '名稱', '外資買超(張)', '投信買超(張)', '雙買總和(張)', '爆量訊號']], use_container_width=True, hide_index=True)
                 else:
                     st.info("近期無外資與投信同步買超之個股。")
                 
             with tab2:
-                st.subheader("🏆 【外資】買超前 20 名")
+                st.subheader(f"🏆 【外資】買超前 20 名 (近 {target_days} 日)")
                 st.dataframe(top20_foreign[['代號', '名稱', '外資買超(張)']], use_container_width=True, hide_index=True)
                 
             with tab3:
-                st.subheader("🏆 【投信】買超前 20 名")
+                st.subheader(f"🏆 【投信】買超前 20 名 (近 {target_days} 日)")
                 st.dataframe(top20_trust[['代號', '名稱', '投信買超(張)']], use_container_width=True, hide_index=True)
 
         except Exception as e:
