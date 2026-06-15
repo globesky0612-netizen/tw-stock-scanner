@@ -55,7 +55,7 @@ def fetch_daily_data(date_str):
         df_t86['投信買賣超'] = df_t86['投信買賣超'].astype(str).str.replace(',', '').astype(float)
 
         # 延遲休息，避免連續請求被證交所阻擋
-        time.sleep(3) 
+        time.sleep(8) 
 
         # 2. 抓取成交量
         res_mi = requests.get(url_mi, headers=headers, timeout=10)
