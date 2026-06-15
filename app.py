@@ -15,9 +15,8 @@ st.set_page_config(page_title="台股籌碼爆量掃描器", page_icon="📈", l
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_daily_data(date_str):
     """
-    抓取籌碼(T86)與成交量(MI_INDEX) - 新舊版 API 雙重解析與容錯版
+    抓取籌碼(T86)與成交量(MI_INDEX) - 排除 ETF 與非 4 碼股票版
     """
-    # 升級版 Headers 偽裝成真實瀏覽器，降低被證交所封鎖的機率
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json, text/javascript, */*; q=0.01",
@@ -34,7 +33,7 @@ def fetch_daily_data(date_str):
         data_t86 = res_t86.json()
         
         if data_t86.get('stat') != 'OK':
-            return None # 無交易資料 (可能為假日或未公佈)
+            return None 
             
         df_t86 = pd.DataFrame(data_t86['data'], columns=data_t86['fields'])
         
@@ -46,16 +45,14 @@ def fetch_daily_data(date_str):
                 foreign_col = col
                 
         if not foreign_col or not trust_col:
-            return None # 找不到籌碼欄位
+            return None 
                 
         df_t86 = df_t86[['證券代號', '證券名稱', foreign_col, trust_col]]
         df_t86.columns = ['代號', '名稱', '外資買賣超', '投信買賣超']
-        # 轉成字串清理逗號後再轉回浮點數
         df_t86['外資買賣超'] = df_t86['外資買賣超'].astype(str).str.replace(',', '').astype(float)
         df_t86['投信買賣超'] = df_t86['投信買賣超'].astype(str).str.replace(',', '').astype(float)
 
-        # 延遲休息，避免連續請求被證交所阻擋
-        time.sleep(8) 
+        time.sleep(3) 
 
         # 2. 抓取成交量
         res_mi = requests.get(url_mi, headers=headers, timeout=10)
@@ -63,7 +60,6 @@ def fetch_daily_data(date_str):
         
         vol_df = None
         if data_mi.get('stat') == 'OK':
-            # 解析新版表格
             if 'tables' in data_mi:
                 for table in data_mi['tables']:
                     fields = table.get('fields', [])
@@ -74,7 +70,6 @@ def fetch_daily_data(date_str):
                         vol_df = vol_df[[code_col, vol_col]]
                         vol_df.columns = ['代號', '成交量']
                         break
-            # 解析舊版表格
             if vol_df is None:
                 for key, value in data_mi.items():
                     if 'fields' in key and isinstance(value, list):
@@ -89,19 +84,23 @@ def fetch_daily_data(date_str):
                                 vol_df.columns = ['代號', '成交量']
                                 break
                             
+        # 3. 合併與過濾 ETF
         if vol_df is not None:
             vol_df['成交量'] = vol_df['成交量'].astype(str).str.replace(',', '').astype(float)
             daily_df = pd.merge(df_t86, vol_df, on='代號', how='left')
             daily_df['日期'] = date_str
-            return daily_df
         else:
-            df_t86['成交量'] = 0.0  
-            df_t86['日期'] = date_str
-            return df_t86
+            daily_df = df_t86.copy()
+            daily_df['成交量'] = 0.0  
+            daily_df['日期'] = date_str
+
+        # 🌟 核心過濾機制：排除開頭為 '00' 的 ETF，並且只保留代號長度剛好為 4 碼的純個股
+        daily_df = daily_df[(daily_df['代號'].str.len() == 4) & (~daily_df['代號'].str.startswith('00'))]
+        
+        return daily_df
 
     except Exception as e:
-        return None
-
+        return None       
 # ==========================================
 # 網頁 UI 與主程式
 # ==========================================
